@@ -91,7 +91,7 @@ public class SingleChronicleQueue implements RollingChronicleQueue {
     @NotNull
     private final BiFunction<RollingChronicleQueue, Wire, WireStore> storeFactory;
     private final StoreRecoveryFactory recoverySupplier;
-    private final Map<Object, Consumer> closers = new WeakHashMap<>();
+    private final Map<Object, Consumer> closers = new HashMap<>();
     private final boolean readOnly;
     long firstAndLastCycleTime = 0;
     int firstAndLastRetry = 0;
