@@ -20,7 +20,6 @@ import net.openhft.chronicle.queue.RollDetails;
 import net.openhft.chronicle.queue.TailerDirection;
 import org.jetbrains.annotations.NotNull;
 
-import java.lang.ref.WeakReference;
 import java.text.ParseException;
 import java.util.Iterator;
 import java.util.Map;
@@ -47,12 +46,10 @@ public class WireStorePool {
     }
 
     public synchronized void close() {
-        if (isClosed)
-            return;
-        isClosed = true;
-
-        stores.values().stream()
-                .forEach(this::release);
+        if (!isClosed) {
+            isClosed = true;
+            stores.values().stream().forEach(this::release);
+        }
     }
 
     @org.jetbrains.annotations.Nullable

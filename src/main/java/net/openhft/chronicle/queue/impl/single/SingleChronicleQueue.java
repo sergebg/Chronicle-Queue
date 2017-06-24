@@ -440,8 +440,7 @@ public class SingleChronicleQueue implements RollingChronicleQueue {
 
     @Override
     public final void release(@Nullable WireStore store) {
-        if (store != null)
-            this.pool.release(store);
+        if (store != null) this.pool.release(store);
     }
 
     @Override
