@@ -1453,7 +1453,6 @@ public class SingleChronicleQueueExcerpts {
             }
 
             context.wire(null);
-            nextStore.reserve();
             this.store = nextStore;
             this.state = FOUND_CYCLE;
             this.setCycle(cycle);

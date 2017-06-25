@@ -25,8 +25,11 @@ import java.util.Iterator;
 import java.util.Map;
 import java.util.NavigableSet;
 import java.util.concurrent.ConcurrentHashMap;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 public class WireStorePool {
+    private static final Logger LOGGER = LoggerFactory.getLogger(WireStorePool.class);
     @NotNull
     private final WireStoreSupplier supplier;
     @NotNull
@@ -90,9 +93,10 @@ public class WireStorePool {
                 if (entry.getValue() == store) {
                     it.remove();
                     storeFileListener.onReleased(entry.getKey().cycle(), store.file());
-                    break;
+                    return;
                 }
             }
+            LOGGER.warn("Store was not registered {}", store.file().getName());
         }
     }
 
