@@ -46,6 +46,7 @@ import java.util.*;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.BiFunction;
 import java.util.function.Consumer;
 import java.util.function.Function;
@@ -60,14 +61,31 @@ public class SingleChronicleQueue implements RollingChronicleQueue {
     public static final String SUFFIX = ".cq4";
     private static final Logger LOG = LoggerFactory.getLogger(SingleChronicleQueue.class);
     private static final int FIRST_AND_LAST_RETRY_MAX = Integer.getInteger("cq.firstAndLastRetryMax", 8);
-    protected final ThreadLocal<WeakReference<ExcerptAppender>> excerptAppenderThreadLocal = new ThreadLocal<>();
+    private final List<AtomicReference<?>> threadLocalResources = new ArrayList<>();
+    private final ThreadLocal<AtomicReference<ExcerptAppender>> excerptAppenderThreadLocal =
+            ThreadLocal.withInitial(() -> {
+                StoreAppender appender = new StoreAppender(SingleChronicleQueue.this);
+                AtomicReference<ExcerptAppender> atomicAppender = new AtomicReference<>(appender);
+                synchronized (threadLocalResources) {
+                    threadLocalResources.add(atomicAppender);
+                }
+                return atomicAppender;
+            });
     protected final int sourceId;
     final Supplier<Pauser> pauserSupplier;
     final long timeoutMS;
     @NotNull
     final File path;
     final AtomicBoolean isClosed = new AtomicBoolean();
-    private final ThreadLocal<WeakReference<StoreTailer>> tlTailer = new ThreadLocal<>();
+    private final ThreadLocal<AtomicReference<StoreTailer>> tlTailer = 
+            ThreadLocal.withInitial(() -> {
+                StoreTailer tailer = new StoreTailer(SingleChronicleQueue.this);
+                AtomicReference<StoreTailer> atomicTailer = new AtomicReference<>(tailer);
+                synchronized (threadLocalResources) {
+                    threadLocalResources.add(atomicTailer);
+                }
+                return atomicTailer;
+            });
     @NotNull
     private final RollCycle rollCycle;
     @NotNull
@@ -137,7 +155,7 @@ public class SingleChronicleQueue implements RollingChronicleQueue {
 
     @Nullable
     StoreTailer acquireTailer() {
-        return ThreadLocalHelper.getTL(tlTailer, this, StoreTailer::new);
+        return tlTailer.get().get();
     }
 
     @NotNull
@@ -290,9 +308,9 @@ public class SingleChronicleQueue implements RollingChronicleQueue {
         if (readOnly) {
             throw new IllegalStateException("Can't append to a read-only chronicle");
         }
-        return ThreadLocalHelper.getTL(excerptAppenderThreadLocal, this, SingleChronicleQueue::newAppender);
+        return excerptAppenderThreadLocal.get().get();
     }
-
+    
     @NotNull
     @Override
     public ExcerptTailer createTailer() {
@@ -311,8 +329,9 @@ public class SingleChronicleQueue implements RollingChronicleQueue {
     }
 
     public long exceptsPerCycle(int cycle) {
-        StoreTailer tailer = acquireTailer();
+        StoreTailer tailer = null;
         try {
+            tailer = acquireTailer();
             long index = rollCycle.toIndex(cycle, 0);
             if (tailer.moveToIndex(index)) {
                 assert tailer.store.refCount() > 1;
@@ -323,7 +342,9 @@ public class SingleChronicleQueue implements RollingChronicleQueue {
         } catch (StreamCorruptedException e) {
             throw new IllegalStateException(e);
         } finally {
-            tailer.release();
+            if (tailer != null) {
+                tailer.release(); // release store
+            }
         }
     }
 
@@ -434,6 +455,10 @@ public class SingleChronicleQueue implements RollingChronicleQueue {
         synchronized (closers) {
             closers.forEach((k, v) -> v.accept(k));
             closers.clear();
+            synchronized (threadLocalResources) {
+                threadLocalResources.forEach(atomic -> atomic.lazySet(null));
+                threadLocalResources.clear();
+            }
         }
         this.pool.close();
     }

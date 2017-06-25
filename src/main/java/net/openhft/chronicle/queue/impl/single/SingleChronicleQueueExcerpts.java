@@ -1426,13 +1426,14 @@ public class SingleChronicleQueueExcerpts {
         }
 
         private boolean cycle(final int cycle, boolean createIfAbsent) {
-            if (this.cycle == cycle && state == FOUND_CYCLE)
+            if (this.cycle == cycle && state == FOUND_CYCLE) {
                 return true;
+            }
 
             WireStore nextStore = this.queue.storeForCycle(cycle, queue.epoch(), createIfAbsent);
-
-            if (nextStore == null && this.store == null)
+            if (nextStore == null && this.store == null) {
                 return false;
+            }
 
             if (nextStore == null) {
                 if (direction == BACKWARD)
@@ -1442,11 +1443,14 @@ public class SingleChronicleQueueExcerpts {
                 return false;
             }
 
-            if (store != null)
+            if (store != null) {
                 queue.release(store);
+            }
 
-            if (nextStore == this.store)
+            if (nextStore == this.store) {
+                LOG.debug("Not expected state, cycle={}", Integer.toHexString(cycle));
                 return true;
+            }
 
             context.wire(null);
             nextStore.reserve();
@@ -1462,7 +1466,7 @@ public class SingleChronicleQueueExcerpts {
 
         void release() {
             if (store != null) {
-                store.release();
+                queue.release(store);
                 store = null;
             }
             state = UNINITIALISED;
@@ -1543,8 +1547,9 @@ public class SingleChronicleQueueExcerpts {
             Jvm.debug().on(getClass(), "received lastAcknowledgedIndexReplicated=" + Long.toHexString(acknowledgeIndex) + " ,file=" + queue().file().getAbsolutePath());
 
             // the reason that we use the temp tailer is to prevent this tailer from having its cycle changed
-            StoreTailer temp = queue.acquireTailer();
+            StoreTailer temp = null;
             try {
+                temp = queue.acquireTailer();
                 RollCycle rollCycle = queue.rollCycle();
                 int cycle0 = rollCycle.toCycle(acknowledgeIndex);
 
@@ -1559,17 +1564,23 @@ public class SingleChronicleQueueExcerpts {
                 }
                 temp.store.lastAcknowledgedIndexReplicated(acknowledgeIndex);
             } finally {
-                temp.release();
+                if (temp != null) {
+                    temp.release();
+                }
             }
         }
 
         public long lastAcknowledgedIndexReplicated() throws EOFException {
             // the reason that we use the temp tailer is to prevent this tailer from having its cycle changed
-            final StoreTailer temp = (StoreTailer) queue.acquireTailer().toEnd();
+            StoreTailer temp = null;
             try {
+                temp = queue.acquireTailer();
+                temp.toEnd();
                 return temp.store.lastAcknowledgedIndexReplicated();
             } finally {
-                temp.release();
+                if (temp != null) {
+                    temp.release();
+                }
             }
         }
 

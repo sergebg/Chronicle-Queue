@@ -25,7 +25,6 @@ import net.openhft.chronicle.core.Jvm;
 import net.openhft.chronicle.core.Maths;
 import net.openhft.chronicle.core.annotation.UsedViaReflection;
 import net.openhft.chronicle.core.io.Closeable;
-import net.openhft.chronicle.core.threads.ThreadLocalHelper;
 import net.openhft.chronicle.core.values.LongArrayValues;
 import net.openhft.chronicle.core.values.LongValue;
 import net.openhft.chronicle.queue.impl.ExcerptContext;
@@ -36,26 +35,33 @@ import org.jetbrains.annotations.Nullable;
 
 import java.io.EOFException;
 import java.io.StreamCorruptedException;
-import java.lang.ref.WeakReference;
+import java.util.ArrayList;
+import java.util.List;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
+import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.Supplier;
 
 import static net.openhft.chronicle.wire.Wires.NOT_INITIALIZED;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 /**
  * Created by peter on 22/05/16.
  */
 class SCQIndexing implements Demarshallable, WriteMarshallable, Closeable {
+    private static final Logger logger = LoggerFactory.getLogger(SCQIndexing.class);
     private final int indexCount, indexCountBits;
     private final int indexSpacing, indexSpacingBits;
     private final LongValue index2Index;
     private final LongValue nextEntryToBeIndexed;
     private final Supplier<LongArrayValues> longArraySupplier;
     @NotNull
-    private final ThreadLocal<WeakReference<LongArrayValuesHolder>> index2indexArray;
+    private final ThreadLocal<AtomicReference<LongArrayValuesHolder>> index2indexArray;
     @NotNull
-    private final ThreadLocal<WeakReference<LongArrayValuesHolder>> indexArray;
+    private final ThreadLocal<AtomicReference<LongArrayValuesHolder>> indexArray;
+    /** Only within synchronized block */
+    private final List<AtomicReference<?>> resources = new ArrayList<>();
     @NotNull
     private final WriteMarshallable index2IndexTemplate;
     @NotNull
@@ -88,20 +94,29 @@ class SCQIndexing implements Demarshallable, WriteMarshallable, Closeable {
         this.index2Index = index2Index;
         this.nextEntryToBeIndexed = nextEntryToBeIndexed;
         this.longArraySupplier = longArraySupplier;
-        this.index2indexArray = new ThreadLocal<>();
-        this.indexArray = new ThreadLocal<>();
+        this.index2indexArray = ThreadLocal.withInitial(this::createAtomicLongArrayValuesHolder);
+        this.indexArray = ThreadLocal.withInitial(this::createAtomicLongArrayValuesHolder);
         this.index2IndexTemplate = w -> w.writeEventName(() -> "index2index").int64array(indexCount);
         this.indexTemplate = w -> w.writeEventName(() -> "index").int64array(indexCount);
+    }
+    
+    private AtomicReference<LongArrayValuesHolder> createAtomicLongArrayValuesHolder() {
+        LongArrayValuesHolder holder = new LongArrayValuesHolder(longArraySupplier.get());
+        AtomicReference<LongArrayValuesHolder> atomicHolder = new AtomicReference<>(holder);
+        synchronized (resources) {
+            resources.add(atomicHolder);
+        }
+        return atomicHolder;
     }
 
     @Nullable
     private LongArrayValuesHolder getIndex2IndexArray() {
-        return ThreadLocalHelper.getTL(index2indexArray, longArraySupplier, las -> new LongArrayValuesHolder(las.get()));
+        return index2indexArray.get().get();
     }
 
     @Nullable
     private LongArrayValuesHolder getIndexArray() {
-        return ThreadLocalHelper.getTL(indexArray, longArraySupplier, las -> new LongArrayValuesHolder(las.get()));
+        return indexArray.get().get();
     }
 
     public long toAddress0(long index) {
@@ -120,6 +135,11 @@ class SCQIndexing implements Demarshallable, WriteMarshallable, Closeable {
 
     @Override
     public void close() {
+        synchronized (resources) {
+            logger.debug("Cleaning {} thread locals", resources.size());
+            resources.forEach(atomic -> atomic.set(null));
+            resources.clear();
+        }
     }
 
     @Override
